@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">XPlorer</string>
+    <string name="open_drawer">Open menu</string>
+    <string name="close_drawer">Close menu</string>
+    <string name="used_s">Used: %1$s</string>
+    <string name="total_s">Total: %1$s</string>
+    <string name="partitions">Partitions</string>
+    <string name="data">Data</string>
+    <string name="root">Root</string>
+    <string name="external_storage">External Storage</string>
+    <string name="system">System</string>
+    <string name="directory_is_empty">Directory is empty</string>
+    <string name="permissions_denied">Permissions Denied</string>
+</resources>
