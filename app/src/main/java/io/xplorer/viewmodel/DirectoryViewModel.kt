@@ -40,18 +40,15 @@ class DirectoryViewModel(app: Application) : StateViewModel<List<File>>(app) {
         directorySubject.onNext(dir)
     }
 
-    private val dirObservable: Observable<File> = directorySubject.flatMap {
-        Observable.merge(
-                Observable.just(0),
-                RxFileObserver.create(it)
-        ).map { it }
+    private val dirObservable: Observable<File> = directorySubject.flatMap { file ->
+        Observable.interval(0, 1, TimeUnit.SECONDS).map { file }
     }
 
     override val state: Observable<State> by lazy {
         Observable.merge(
                 Observable.just(LoadingState()),
                 Observables.combineLatest(
-                        directorySubject.flatMap { dir -> Observable.interval(0, 1, TimeUnit.SECONDS).map { dir } },
+                        dirObservable,
                         showHiddenFiles,
                         reverseListOrder,
                         listOrder,
@@ -65,7 +62,7 @@ class DirectoryViewModel(app: Application) : StateViewModel<List<File>>(app) {
                         ErrorState(t)
                     }
                 }
-        ).subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
+        ).distinctUntilChanged().subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
     }
 
     class PermissionsDeniedException(permissions: Set<String>) : RuntimeException(
