@@ -26,5 +26,13 @@
             android:gravity="center"
             android:textAppearance="?android:textAppearanceMedium"
             tools:text="error" />
+
+        <Button
+            android:id="@+id/retry"
+            style="?borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/retry" />
     </LinearLayout>
 </ScrollView>

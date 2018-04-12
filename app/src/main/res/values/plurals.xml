@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="permissions_denied">
+        <item quantity="zero">Permissions Denied!</item>
+        <item quantity="one">Permission %1$s denied!</item>
+        <item quantity="two">Permissions denied!:\n%1$s</item>
+        <item quantity="few">Permissions denied!:\n%1$s</item>
+        <item quantity="many">Permissions denied!:\n%1$s</item>
+        <item quantity="other">Permissions denied!:\n%1$s</item>
+    </plurals>
+</resources>

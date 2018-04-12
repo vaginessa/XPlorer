@@ -11,4 +11,5 @@
     <string name="system">System</string>
     <string name="directory_is_empty">Directory is empty</string>
     <string name="permissions_denied">Permissions Denied</string>
+    <string name="retry">Retry</string>
 </resources>

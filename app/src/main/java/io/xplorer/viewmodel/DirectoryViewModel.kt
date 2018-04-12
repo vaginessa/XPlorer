@@ -1,112 +1,98 @@
 package io.xplorer.viewmodel
 
 import android.Manifest
-import android.app.Application
-import android.os.FileObserver
 import io.reactivex.Observable
 import io.reactivex.android.schedulers.AndroidSchedulers
 import io.reactivex.rxkotlin.Observables
 import io.reactivex.schedulers.Schedulers
 import io.reactivex.subjects.BehaviorSubject
-import io.utils.Busybox
-import io.utils.Permissions
-import io.utils.RxSharedPreferences
-import io.utils.baseContext
 import io.xplorer.R
+import io.xplorer.util.*
 import java.io.File
+import java.util.*
 import java.util.concurrent.TimeUnit
 
-class DirectoryViewModel(app: Application) : StateViewModel<List<File>>(app) {
-    private val directorySubject = BehaviorSubject.create<File>()
+class DirectoryViewModel : StateViewModel<List<File>>() {
+    private val dirSubject = BehaviorSubject.create<File>()
+    private val dirStack = Stack<File>()
+    private val listComparator: Observable<Comparator<File>> = Observables.combineLatest(
+            RxSharedPreferences.getSingleton().getBoolean(R.string.preference_files_sort_order_invert),
+            RxSharedPreferences.getSingleton()
+                    .getString(R.string.preference_files_sort_order)
+                    .map { EnumUtil.valueOf(it, FilesListOrder.NAME) }
+                    .map {
+                        when (it) {
+                            FilesListOrder.NAME -> compareBy<File>({ it.isFile }, { it.name.toLowerCase() })
+                            FilesListOrder.DATE -> compareBy({ it.lastModified() }, { it.name.toLowerCase() })
+                            FilesListOrder.SIZE -> compareBy({ it.isFile }, { it.length() }, { it.name.toLowerCase() })
+                            FilesListOrder.TYPE -> compareBy({ it.isFile }, { it.mimeType }, { it.name.toLowerCase() })
+                        }
+                    }
+    ) { invert, comparator -> comparator.invert(invert) }.subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
 
-    val showHiddenFiles: Observable<Boolean> by lazy {
-        RxSharedPreferences.getSingleton().getBoolean(R.string.preference_show_hidden_files)
+    private val showHidden = RxSharedPreferences.getSingleton().getBoolean(R.string.preference_show_hidden_files)
+
+    val directory: Observable<File> = dirSubject.filter { it.isDirectory }
+
+    fun setFilesOrder(order: FilesListOrder, invert: Boolean) {
+        RxSharedPreferences.getSingleton().edit()
+                .putString(R.string.preference_files_sort_order, order.name)
+                .putBoolean(R.string.preference_files_sort_order_invert, invert)
+                .apply()
     }
-    val reverseListOrder: Observable<Boolean> by lazy {
-        RxSharedPreferences.getSingleton().getBoolean(R.string.preference_files_list_order_reverse)
+
+    fun showHidden(show: Boolean) {
+        RxSharedPreferences.getSingleton().edit()
+                .putBoolean(R.string.preference_show_hidden_files, show)
+                .apply()
     }
-    val listOrder: Observable<Order> by lazy {
-        RxSharedPreferences.getSingleton().getString(R.string.preference_files_list_order).map {
-            try {
-                Order.valueOf(it)
-            } catch (_: Throwable) {
-                Order.NAME
+
+    fun setDirectory(directory: File) {
+        dirSubject.onNext(directory)
+        dirStack.push(directory)
+    }
+
+    fun back(): Boolean {
+        if (!dirStack.empty()) dirStack.pop()
+        if (dirStack.empty()) return false
+        dirSubject.onNext(dirStack.peek())
+        return true
+    }
+
+    fun reload() {
+        if (dirStack.empty()) return
+        dirSubject.onNext(dirStack.peek())
+    }
+
+    override fun provideState(): Observable<State> {
+        val subject = BehaviorSubject.create<State>()
+        return directory.doOnNext {
+            subject.onNext(LoadingState())
+        }.flatMap { dir ->
+            Permissions.request(*PERMISSIONS).toObservable().flatMap {
+                if (it.denied.isEmpty())
+                    Observable.interval(0, 1, TimeUnit.SECONDS).flatMap {
+                        Observables.combineLatest(
+                                Files.listFiles(dir).toObservable(),
+                                listComparator,
+                                showHidden
+                        ) { files, order, hidden ->
+                            (if (hidden) files else files.filter { !it.isHidden }).sortedWith(order)
+                        }
+                    }.doOnNext {
+                        subject.onNext(if (it.isEmpty()) EmptyState() else ContentState(it))
+                    }.doOnError {
+                        subject.onNext(ErrorState(it))
+                    }.flatMap { subject }
+                else Observable.just(ErrorState(PermissionsDeniedException(it.denied)))
             }
         }
     }
 
-    fun setDirectory(dir: File) {
-        if (!dir.isDirectory) throw IllegalArgumentException("$dir is file")
-        directorySubject.onNext(dir)
-    }
-
-    private val dirObservable: Observable<File> = directorySubject.flatMap { file ->
-        Observable.interval(0, 1, TimeUnit.SECONDS).map { file }
-    }
-
-    override val state: Observable<State> by lazy {
-        Observable.merge(
-                Observable.just(LoadingState()),
-                Observables.combineLatest(
-                        dirObservable,
-                        showHiddenFiles,
-                        reverseListOrder,
-                        listOrder,
-                        Permissions.request(*PERMISSIONS).toObservable()
-                ) { dir, hidden, reverse, order, permissionsResult ->
-                    if (permissionsResult.denied.isNotEmpty()) ErrorState(PermissionsDeniedException(permissionsResult.denied))
-                    else try {
-                        val list = listFiles(dir).filter { hidden || !it.isHidden }.sortedWith(order.getComparator(reverse))
-                        if (list.isEmpty()) EmptyState() else ContentState(list)
-                    } catch (t: Throwable) {
-                        ErrorState(t)
-                    }
-                }
-        ).distinctUntilChanged().subscribeOn(Schedulers.io()).observeOn(AndroidSchedulers.mainThread())
-    }
-
-    class PermissionsDeniedException(permissions: Set<String>) : RuntimeException(
-            baseContext.resources.getQuantityString(R.plurals.permissions_denied, permissions.size, permissions.joinToString("\t"))
-    )
-
-    enum class Order(private val comparator: Comparator<File>) {
-        NAME(compareBy({ it.isFile }, { it.name.toLowerCase() })),
-        DATE(compareBy({ it.lastModified() }, { it.name.toLowerCase() })),
-        SIZE(compareBy({ calculateSize(it) }, { it.name.toLowerCase() })),
-        TYPE(compareBy({ it.isFile }, { it.extension.toLowerCase() }));
-
-        val directOrder: Comparator<File> = comparator
-
-        val reverseOrder: Comparator<File> = Comparator { f1, f2 -> -comparator.compare(f1, f2) }
-
-        fun getComparator(reverse: Boolean): Comparator<File> = if (reverse) reverseOrder else directOrder
-    }
-
     companion object {
-        val WATCHER_MASK = FileObserver.DELETE or
-                FileObserver.DELETE_SELF or
-                FileObserver.CREATE or
-                FileObserver.MODIFY or
-                FileObserver.MOVED_FROM or
-                FileObserver.MOVED_TO or
-                FileObserver.MOVE_SELF
-
         val PERMISSIONS = arrayOf(
                 Manifest.permission.READ_EXTERNAL_STORAGE,
                 Manifest.permission.WRITE_EXTERNAL_STORAGE
         )
-
-        private fun listFiles(dir: File): List<File> {
-            val list = dir.listFiles()?.toList()
-            if (list != null) return list
-            val command = "ls -1A ${dir.absolutePath.replace(Regex("\\s"), "\\ ")}"
-            return Busybox.execute(true, command).blockingGet().map { File(dir, it) }
-        }
-
-        private fun calculateSize(file: File): Long = if (file.isDirectory) {
-            var size = 0L
-            listFiles(file).forEach { size += calculateSize(it) }
-            size
-        } else file.length()
     }
 }

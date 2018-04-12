@@ -10,67 +10,67 @@ import com.kennyc.view.MultiStateView
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.rxkotlin.cast
 import io.reactivex.rxkotlin.plusAssign
-import io.utils.RecyclerViewAdapter
-import io.utils.bind
 import io.xplorer.R
-import io.xplorer.presenter.ItemFilePresenter
-import io.xplorer.util.getViewModel
+import io.xplorer.presenter.FileItemPresenter
+import io.xplorer.util.RecyclerViewAdapter
+import io.xplorer.util.bind
 import io.xplorer.viewmodel.DirectoryViewModel
 import io.xplorer.viewmodel.StateViewModel
 import kotlinx.android.synthetic.main.fragment_directory.view.*
 import kotlinx.android.synthetic.main.view_state_error.view.*
 import java.io.File
 
-class DirectoryFragment : PageFragment<File>() {
-    private val disposable = CompositeDisposable()
-    private val model by lazy { activity!!.application.getViewModel<DirectoryViewModel>() }
-    private val adapter = RecyclerViewAdapter(ItemFilePresenter(), FilesDiffCallback())
+class DirectoryFragment : ViewModelFragment<DirectoryViewModel>(DirectoryViewModel::class) {
+    private val adapter = RecyclerViewAdapter(FileItemPresenter, FilesDiffCallback)
+    private val disposables = CompositeDisposable()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        model.setDirectory(item)
-        disposable += model.state
+        disposables += model.state
                 .filter { it is StateViewModel<*>.ContentState }
                 .cast<StateViewModel<List<File>>.ContentState>()
-                .subscribe {
-                    adapter.set(it.content)
-                }
+                .subscribe { adapter.set(it.content) }
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val view = inflater.inflate(R.layout.fragment_directory, container, false)
-        view.toolbar.title = item.name
-        view.toolbar.subtitle = item.parent
+        view.toolbar.bind(model.directory) {
+            title = it.name
+            subtitle = it.parent
+        }
         view.filesList.adapter = adapter
         view.filesList.layoutManager = LinearLayoutManager(context)
         view.filesList.addItemDecoration(DividerItemDecoration(context, DividerItemDecoration.VERTICAL))
+        view.stateView.getView(MultiStateView.VIEW_STATE_ERROR)?.retry?.setOnClickListener { model.reload() }
         view.stateView.bind(model.state) {
-            when (it) {
-                is StateViewModel<*>.LoadingState -> viewState = MultiStateView.VIEW_STATE_LOADING
-                is StateViewModel<*>.EmptyState -> viewState = MultiStateView.VIEW_STATE_EMPTY
-                is StateViewModel<*>.ContentState -> viewState = MultiStateView.VIEW_STATE_CONTENT
-                is StateViewModel<*>.ErrorState -> {
-                    viewState = MultiStateView.VIEW_STATE_ERROR
-                    getView(MultiStateView.VIEW_STATE_ERROR)?.errorText?.text = it.error.message ?: it.error.toString()
-                }
+            viewState = when (it) {
+                is StateViewModel<*>.EmptyState -> MultiStateView.VIEW_STATE_EMPTY
+                is StateViewModel<*>.ErrorState -> MultiStateView.VIEW_STATE_ERROR
+                is StateViewModel<*>.LoadingState -> MultiStateView.VIEW_STATE_LOADING
+                else -> MultiStateView.VIEW_STATE_CONTENT
             }
+            val error = (it as? StateViewModel<*>.ErrorState)?.error
+            getView(MultiStateView.VIEW_STATE_ERROR)?.errorText?.text = error?.message ?: error?.toString()
         }
         return view
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        disposable.clear()
+        disposables.clear()
     }
 
-    class FilesDiffCallback : RecyclerViewAdapter.DiffCallback<File> {
-        override fun areItemsTheSame(oldItem: File, newItem: File): Boolean = oldItem.absolutePath == newItem.absolutePath
-        override fun areContentsTheSame(oldItem: File, newItem: File): Boolean =
-                oldItem.absolutePath == newItem.absolutePath &&
-                        oldItem.length() == newItem.length() &&
-                        oldItem.lastModified() == newItem.lastModified() &&
-                        oldItem.canExecute() == newItem.canExecute() &&
-                        oldItem.canRead() == newItem.canRead() &&
-                        oldItem.canWrite() == newItem.canWrite()
+    fun back(): Boolean = model.back()
+
+    fun open(dir: File) = model.setDirectory(dir)
+
+    object FilesDiffCallback : RecyclerViewAdapter.DiffCallback<File> {
+        override fun areItemsTheSame(oldItem: File, newItem: File): Boolean = oldItem == newItem
+        override fun areContentsTheSame(oldItem: File, newItem: File): Boolean = oldItem.absolutePath == newItem.absolutePath &&
+                oldItem.exists() == newItem.exists() &&
+                oldItem.length() == newItem.length() &&
+                oldItem.canRead() == newItem.canRead() &&
+                oldItem.canWrite() == newItem.canWrite() &&
+                oldItem.canExecute() == newItem.canExecute()
     }
 }
